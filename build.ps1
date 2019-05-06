@@ -1,26 +1,33 @@
-Param([Switch]$Fast)
-Push-Location $psscriptroot
-. "$psscriptroot\..\..\lib\install.ps1"
+Push-Location $PSScriptRoot
 
-if(!$Fast) {
-    Write-Host "Install dependencies ..."
-    Invoke-Expression "$psscriptroot\install.ps1"
-}
+# Prepare
+$build = "$PSScriptRoot\build"
+$dist = "$PSScriptRoot\dist"
+$src = "$PSScriptRoot\src"
+New-Item -ItemType Directory -Path $build -ErrorAction SilentlyContinue | Out-Null
+New-Item -ItemType Directory -Path $dist -ErrorAction SilentlyContinue | Out-Null
+Remove-Item "$build\*" -Recurse -Force | Out-Null
+Remove-Item "$dist\*" -Recurse -Force | Out-Null
 
-$output = "$psscriptroot\bin"
-if(!$Fast) {
-    Get-ChildItem "$psscriptroot\packages\Newtonsoft.*\lib\net45\*.dll" -File | ForEach-Object { Copy-Item $_ $output }
-}
+# Build
+Copy-Item "$PSScriptRoot\packages\Newtonsoft.Json\lib\net45\Newtonsoft.Json.dll" $build
+Copy-Item "$PSScriptRoot\packages\Newtonsoft.Json.Schema\lib\net45\Newtonsoft.Json.Schema.dll" $build
 Write-Output 'Compiling Scoop.Validator.cs ...'
-& "$psscriptroot\packages\Microsoft.Net.Compilers\tools\csc.exe" /deterministic /platform:anycpu /nologo /optimize /target:library /reference:"$output\Newtonsoft.Json.dll","$output\Newtonsoft.Json.Schema.dll" /out:"$output\Scoop.Validator.dll" Scoop.Validator.cs
+& "$PSScriptRoot\packages\Microsoft.Net.Compilers\tools\csc.exe" /deterministic /platform:anycpu /nologo /optimize /target:library /reference:"$build\Newtonsoft.Json.dll","$build\Newtonsoft.Json.Schema.dll" /out:"$build\Scoop.Validator.dll" "$src\Scoop.Validator.cs"
 Write-Output 'Compiling validator.cs ...'
-& "$psscriptroot\packages\Microsoft.Net.Compilers\tools\csc.exe" /deterministic /platform:anycpu /nologo /optimize /target:exe /reference:"$output\Scoop.Validator.dll","$output\Newtonsoft.Json.dll","$output\Newtonsoft.Json.Schema.dll" /out:"$output\validator.exe" validator.cs
+& "$PSScriptRoot\packages\Microsoft.Net.Compilers\tools\csc.exe" /deterministic /platform:anycpu /nologo /optimize /target:exe /reference:"$build\Scoop.Validator.dll","$build\Newtonsoft.Json.dll","$build\Newtonsoft.Json.Schema.dll" /out:"$build\validator.exe" "$src\validator.cs"
 
+# Checksums
 Write-Output 'Computing checksums ...'
-Remove-Item "$psscriptroot\bin\checksum.sha256" -ErrorAction Ignore
-Remove-Item "$psscriptroot\bin\checksum.sha512" -ErrorAction Ignore
-Get-ChildItem "$psscriptroot\bin\*" -Include *.exe,*.dll | ForEach-Object {
-    "$(compute_hash $_ 'sha256') *$($_.Name)" | Out-File "$psscriptroot\bin\checksum.sha256" -Append -Encoding oem
-    "$(compute_hash $_ 'sha512') *$($_.Name)" | Out-File "$psscriptroot\bin\checksum.sha512" -Append -Encoding oem
+Get-ChildItem "$build\*" -Include *.exe,*.dll -Recurse | ForEach-Object {
+    $checksum = (Get-FileHash -Path $_.FullName -Algorithm SHA256).Hash.ToLower()
+    "$checksum *$($_.FullName.Replace($build, '').TrimStart('\'))" | Tee-Object -FilePath "$build\checksums.sha256" -Append
+}
+
+# Package
+7z a "$dist\validator.zip" "$build\*"
+Get-ChildItem "$dist\*" | ForEach-Object {
+    $checksum = (Get-FileHash -Path $_.FullName -Algorithm SHA256).Hash.ToLower()
+    "$checksum *$($_.Name)" | Tee-Object -FilePath "$dist\$($_.Name).sha256" -Append
 }
 Pop-Location
